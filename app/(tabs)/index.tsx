@@ -6,6 +6,11 @@ import {styled} from "nativewind";
 
 const SafeAreaView=styled(RNSafeAreaView)
 
+/**
+ * Renders the app's main screen: a styled SafeAreaView containing a heading and navigation links to onboarding, auth, and subscription routes.
+ *
+ * @returns The root React element for the main application screen.
+ */
 export default function App() {
     return (
         <SafeAreaView className="flex-1 p-5 bg-background">
