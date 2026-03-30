@@ -32,7 +32,7 @@ const SubscriptionCard = ({name,price,currency,icon,billing,color,category,plan,
                                     Payment:
                                 </Text>
                                 <Text className="sub-value" numberOfLines={1} ellipsizeMode={"tail"}>
-                                    {paymentMethod?.trim()}
+                                    {paymentMethod?.trim() ?? 'Not Provided'}
                                 </Text>
                             </View>
                         </View>
@@ -42,7 +42,7 @@ const SubscriptionCard = ({name,price,currency,icon,billing,color,category,plan,
                                     Category:
                                 </Text>
                                 <Text className="sub-value" numberOfLines={1} ellipsizeMode={"tail"}>
-                                    {category?.trim() || plan?.trim()}
+                                    {(category?.trim() || plan?.trim()) ?? 'Not Provided'}
                                 </Text>
                             </View>
                         </View>
@@ -52,7 +52,7 @@ const SubscriptionCard = ({name,price,currency,icon,billing,color,category,plan,
                                     Started:
                                 </Text>
                                 <Text className="sub-value" numberOfLines={1} ellipsizeMode={"tail"}>
-                                    {startDate? formatSubscriptionDateTime(startDate) : ''}
+                                    {startDate? formatSubscriptionDateTime(startDate) : 'Not provided'}
                                 </Text>
                             </View>
                         </View>
@@ -62,7 +62,7 @@ const SubscriptionCard = ({name,price,currency,icon,billing,color,category,plan,
                                     RenewalDate:
                                 </Text>
                                 <Text className="sub-value" numberOfLines={1} ellipsizeMode={"tail"}>
-                                    {renewalDate? formatSubscriptionDateTime(renewalDate):''}
+                                    {renewalDate? formatSubscriptionDateTime(renewalDate):'Not Provided'}
                                 </Text>
                             </View>
                         </View>
@@ -72,7 +72,7 @@ const SubscriptionCard = ({name,price,currency,icon,billing,color,category,plan,
                                     Status:
                                 </Text>
                                 <Text className="sub-value" numberOfLines={1} ellipsizeMode={"tail"}>
-                                    {status? formatStatusLabel(status):''}
+                                    {status? formatStatusLabel(status):'Not Provided'}
                                 </Text>
                             </View>
                         </View>
