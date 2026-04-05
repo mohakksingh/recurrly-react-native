@@ -46,8 +46,21 @@ const SignUp = () => {
         }
 
         // Send verification email
-        if (!error) {
+        try {
             await signUp.verifications.sendEmailCode();
+        } catch (error) {
+            console.error('Failed to send verification email:', error);
+
+            // Set user-facing error message
+            const errorMessage =
+                error instanceof Error && error.message
+                    ? error.message
+                    : 'Failed to send verification email. Please try again.';
+
+            setVerificationError(errorMessage);
+            posthog.capture('user_sign_up_email_code_failed', {
+                error_message: errorMessage,
+            });
         }
     };
 
@@ -60,14 +73,9 @@ const SignUp = () => {
                 code,
             });
 
-             if (signUp.status === 'complete') {
+            if (signUp.status === 'complete') {
                 await signUp.finalize({
                     navigate: ({ session, decorateUrl }) => {
-                        if (session?.currentTask) {
-                            console.log(session?.currentTask);
-                            return;
-                        }
-
                         // Use Clerk user ID for analytics instead of raw email (PII)
                         const userId = session?.user?.id;
                         const emailHash = hashEmail(emailAddress);
@@ -82,17 +90,19 @@ const SignUp = () => {
                         }
 
                         posthog.capture('user_signed_up', {
-                            user_id: userId,
+                            ...(userId && { user_id: userId }),
                         });
 
-                        const url = decorateUrl('/(tabs)');
+                        // Navigate to home (currentTask doesn't expose a URL property)
+                        const url = decorateUrl('/');
+
                         if (url.startsWith('http')) {
                             // Only use window.location on web platform
                             if (typeof window !== 'undefined' && window.location) {
                                 window.location.href = url;
                             } else {
                                 // On native, just use router navigation
-                                router.replace('/(tabs)' as Href);
+                                router.replace(url as Href);
                             }
                         } else {
                             router.replace(url as Href);
@@ -115,6 +125,16 @@ const SignUp = () => {
             posthog.capture('user_sign_up_verification_failed', {
                 error_message: errorMessage,
             });
+        }
+    };
+
+
+    const handleResendCode = async () => {
+        try {
+            await signUp.verifications.sendEmailCode();
+        } catch (error) {
+            console.error('Failed to resend code:', error);
+            setVerificationError('Failed to resend code. Please try again.');
         }
     };
 
@@ -193,7 +213,7 @@ const SignUp = () => {
 
                                     <Pressable
                                         className="auth-secondary-button"
-                                        onPress={() => signUp.verifications.sendEmailCode()}
+                                        onPress={handleResendCode}
                                         disabled={fetchStatus === 'fetching'}
                                     >
                                         <Text className="auth-secondary-button-text">Resend Code</Text>

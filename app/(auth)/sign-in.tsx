@@ -46,44 +46,46 @@ const SignIn = () => {
         }
 
         if (signIn.status === 'complete') {
-            await signIn.finalize({
-                navigate: ({ session, decorateUrl }) => {
-                    if (session?.currentTask) {
-                        console.log(session?.currentTask);
-                        return;
-                    }
+             await signIn.finalize({
+                 navigate: ({ session, decorateUrl }) => {
+                     // Use Clerk user ID for analytics instead of raw email (PII)
+                     const userId = session?.user?.id;
+                     const emailHash = hashEmail(emailAddress);
 
-                    // Use Clerk user ID for analytics instead of raw email (PII)
-                    const userId = session?.user?.id;
-                    const emailHash = hashEmail(emailAddress);
+                     if (userId) {
+                         posthog.identify(userId, {
+                             $set: {
+                                 email_hash: emailHash,
+                             },
+                             $set_once: { first_sign_in_date: new Date().toISOString() },
+                         });
+                     }
 
-                    if (userId) {
-                        posthog.identify(userId, {
-                            $set: {
-                                email_hash: emailHash,
-                            },
-                            $set_once: { first_sign_in_date: new Date().toISOString() },
-                        });
-                    }
+                     posthog.capture('user_signed_in', {
+                         user_id: userId,
+                     });
 
-                    posthog.capture('user_signed_in', {
-                        user_id: userId,
-                    });
+                     // Handle pending task or navigate to home
+                     let url: string;
+                     if (session?.currentTask) {
+                         url = decorateUrl(session.currentTask.url);
+                     } else {
+                         url = decorateUrl('/');
+                     }
 
-                    const url = decorateUrl('/(tabs)');
-                    if (url.startsWith('http')) {
-                        // Only use window.location on web platform
-                        if (typeof window !== 'undefined' && window.location) {
-                            window.location.href = url;
-                        } else {
-                            // On native, just use router navigation
-                            router.replace('/(tabs)' as Href);
-                        }
-                    } else {
-                        router.replace(url as Href);
-                    }
-                },
-            });
+                     if (url.startsWith('http')) {
+                         // Only use window.location on web platform
+                         if (typeof window !== 'undefined' && window.location) {
+                             window.location.href = url;
+                         } else {
+                             // On native, just use router navigation
+                             router.replace(url as Href);
+                         }
+                     } else {
+                         router.replace(url as Href);
+                     }
+                 },
+             });
         } else if (signIn.status === 'needs_second_factor') {
             // Set flag to show MFA verification UI
             setMfaRequired(true);
@@ -115,47 +117,49 @@ const SignIn = () => {
 
             await signIn.mfa.verifyEmailCode({ code });
 
-            if (signIn.status === 'complete') {
-                await signIn.finalize({
-                    navigate: ({ session, decorateUrl }) => {
-                        if (session?.currentTask) {
-                            console.log(session?.currentTask);
-                            return;
-                        }
+             if (signIn.status === 'complete') {
+                 await signIn.finalize({
+                     navigate: ({ session, decorateUrl }) => {
+                         // Track successful sign-in after verification using non-PII identifier
+                         const userId = session?.user?.id;
+                         const emailHash = hashEmail(emailAddress);
 
-                        // Track successful sign-in after verification using non-PII identifier
-                        const userId = session?.user?.id;
-                        const emailHash = hashEmail(emailAddress);
+                         if (userId) {
+                             posthog.identify(userId, {
+                                 $set: {
+                                     email_hash: emailHash,
+                                 },
+                                 $set_once: { first_sign_in_date: new Date().toISOString() },
+                             });
+                         }
 
-                        if (userId) {
-                            posthog.identify(userId, {
-                                $set: {
-                                    email_hash: emailHash,
-                                },
-                                $set_once: { first_sign_in_date: new Date().toISOString() },
-                            });
-                        }
+                         posthog.capture('user_signed_in', {
+                             user_id: userId,
+                         });
 
-                        posthog.capture('user_signed_in', {
-                            user_id: userId,
-                        });
+                         // Handle pending task or navigate to home
+                         let url: string;
+                         if (session?.currentTask) {
+                             url = decorateUrl(session.currentTask.url);
+                         } else {
+                             url = decorateUrl('/');
+                         }
 
-                        const url = decorateUrl('/(tabs)');
-                        if (url.startsWith('http')) {
-                            // Only use window.location on web platform
-                            if (typeof window !== 'undefined' && window.location) {
-                                window.location.href = url;
-                            } else {
-                                // On native, just use router navigation
-                                router.replace('/(tabs)' as Href);
-                            }
-                        } else {
-                            router.replace(url as Href);
-                        }
-                    },
-                });
-            } else {
-                console.error('Sign-in attempt not complete:', signIn);
+                         if (url.startsWith('http')) {
+                             // Only use window.location on web platform
+                             if (typeof window !== 'undefined' && window.location) {
+                                 window.location.href = url;
+                             } else {
+                                 // On native, just use router navigation
+                                 router.replace(url as Href);
+                             }
+                         } else {
+                             router.replace(url as Href);
+                         }
+                     },
+                 });
+             } else {
+                 console.error('Sign-in attempt not complete:', signIn);
             }
         } catch (error) {
             console.error('Email verification failed:', error);
