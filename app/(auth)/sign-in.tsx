@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { SafeAreaView as RNSafeAreaView } from 'react-native-safe-area-context';
 import { styled } from 'nativewind';
 import { usePostHog } from 'posthog-react-native';
+import { hashEmail } from '@/lib/utils';
 
 const SafeAreaView = styled(RNSafeAreaView);
 
@@ -16,6 +17,8 @@ const SignIn = () => {
     const [emailAddress, setEmailAddress] = useState('');
     const [password, setPassword] = useState('');
     const [code, setCode] = useState('');
+    const [mfaRequired, setMfaRequired] = useState(false);
+    const [verificationError, setVerificationError] = useState<string | null>(null);
 
     // Validation states
     const [emailTouched, setEmailTouched] = useState(false);
@@ -50,11 +53,22 @@ const SignIn = () => {
                         return;
                     }
 
-                    posthog.identify(emailAddress, {
-                        $set: { email: emailAddress },
-                        $set_once: { first_sign_in_date: new Date().toISOString() },
+                    // Use Clerk user ID for analytics instead of raw email (PII)
+                    const userId = session?.user?.id;
+                    const emailHash = hashEmail(emailAddress);
+
+                    if (userId) {
+                        posthog.identify(userId, {
+                            $set: {
+                                email_hash: emailHash,
+                            },
+                            $set_once: { first_sign_in_date: new Date().toISOString() },
+                        });
+                    }
+
+                    posthog.capture('user_signed_in', {
+                        user_id: userId,
                     });
-                    posthog.capture('user_signed_in', { email: emailAddress });
 
                     const url = decorateUrl('/(tabs)');
                     if (url.startsWith('http')) {
@@ -71,8 +85,15 @@ const SignIn = () => {
                 },
             });
         } else if (signIn.status === 'needs_second_factor') {
-            // Handle MFA if needed (not implemented in this basic flow)
-            console.log('MFA required');
+            // Set flag to show MFA verification UI
+            setMfaRequired(true);
+            // Send the second factor verification code
+            const emailCodeFactor = signIn.supportedSecondFactors.find(
+                (factor) => factor.strategy === 'email_code'
+            );
+            if (emailCodeFactor) {
+                await signIn.mfa.sendEmailCode();
+            }
         } else if (signIn.status === 'needs_client_trust') {
             // Send email code for client trust verification
             const emailCodeFactor = signIn.supportedSecondFactors.find(
@@ -88,44 +109,78 @@ const SignIn = () => {
     };
 
     const handleVerify = async () => {
-        await signIn.mfa.verifyEmailCode({ code });
+        try {
+            // Clear any previous verification errors
+            setVerificationError(null);
 
-        if (signIn.status === 'complete') {
-            await signIn.finalize({
-                navigate: ({ session, decorateUrl }) => {
-                    if (session?.currentTask) {
-                        console.log(session?.currentTask);
-                        return;
-                    }
+            await signIn.mfa.verifyEmailCode({ code });
 
-                    // Track successful sign-in after verification
-                    posthog.identify(emailAddress, {
-                        $set: { email: emailAddress },
-                        $set_once: { first_sign_in_date: new Date().toISOString() },
-                    });
-                    posthog.capture('user_signed_in', { email: emailAddress });
-
-                    const url = decorateUrl('/(tabs)');
-                    if (url.startsWith('http')) {
-                        // Only use window.location on web platform
-                        if (typeof window !== 'undefined' && window.location) {
-                            window.location.href = url;
-                        } else {
-                            // On native, just use router navigation
-                            router.replace('/(tabs)' as Href);
+            if (signIn.status === 'complete') {
+                await signIn.finalize({
+                    navigate: ({ session, decorateUrl }) => {
+                        if (session?.currentTask) {
+                            console.log(session?.currentTask);
+                            return;
                         }
-                    } else {
-                        router.replace(url as Href);
-                    }
-                },
+
+                        // Track successful sign-in after verification using non-PII identifier
+                        const userId = session?.user?.id;
+                        const emailHash = hashEmail(emailAddress);
+
+                        if (userId) {
+                            posthog.identify(userId, {
+                                $set: {
+                                    email_hash: emailHash,
+                                },
+                                $set_once: { first_sign_in_date: new Date().toISOString() },
+                            });
+                        }
+
+                        posthog.capture('user_signed_in', {
+                            user_id: userId,
+                        });
+
+                        const url = decorateUrl('/(tabs)');
+                        if (url.startsWith('http')) {
+                            // Only use window.location on web platform
+                            if (typeof window !== 'undefined' && window.location) {
+                                window.location.href = url;
+                            } else {
+                                // On native, just use router navigation
+                                router.replace('/(tabs)' as Href);
+                            }
+                        } else {
+                            router.replace(url as Href);
+                        }
+                    },
+                });
+            } else {
+                console.error('Sign-in attempt not complete:', signIn);
+            }
+        } catch (error) {
+            console.error('Email verification failed:', error);
+
+            // Set user-friendly error message
+            const errorMessage =
+                error instanceof Error && error.message
+                    ? error.message
+                    : 'Verification failed. Please check your code and try again.';
+
+            setVerificationError(errorMessage);
+            posthog.capture('user_sign_in_verification_failed', {
+                error_message: errorMessage,
             });
-        } else {
-            console.error('Sign-in attempt not complete:', signIn);
         }
     };
 
-    // Show verification screen if client trust is needed
-    if (signIn.status === 'needs_client_trust') {
+    // Show verification screen if client trust or MFA is needed
+    if (signIn.status === 'needs_client_trust' || mfaRequired) {
+        const isMFA = mfaRequired;
+        const verificationTitle = isMFA ? 'Verify your identity - Second Factor' : 'Verify your identity';
+        const verificationSubtitle = isMFA
+            ? 'Enter the verification code sent to your email'
+            : 'We sent a verification code to your email';
+
         return (
             <SafeAreaView className="auth-safe-area">
                 <KeyboardAvoidingView
@@ -149,9 +204,9 @@ const SignIn = () => {
                                         <Text className="auth-wordmark-sub">SUBSCRIPTIONS</Text>
                                     </View>
                                 </View>
-                                <Text className="auth-title">Verify your identity</Text>
+                                <Text className="auth-title">{verificationTitle}</Text>
                                 <Text className="auth-subtitle">
-                                    We sent a verification code to your email
+                                    {verificationSubtitle}
                                 </Text>
                             </View>
 
@@ -170,6 +225,9 @@ const SignIn = () => {
                                             autoComplete="one-time-code"
                                             maxLength={6}
                                         />
+                                        {verificationError && (
+                                            <Text className="auth-error">{verificationError}</Text>
+                                        )}
                                         {errors.fields.code && (
                                             <Text className="auth-error">{errors.fields.code.message}</Text>
                                         )}
@@ -195,10 +253,16 @@ const SignIn = () => {
 
                                     <Pressable
                                         className="auth-secondary-button"
-                                        onPress={() => signIn.reset()}
+                                        onPress={() => {
+                                            signIn.reset();
+                                            setMfaRequired(false);
+                                            setCode('');
+                                        }}
                                         disabled={fetchStatus === 'fetching'}
                                     >
-                                        <Text className="auth-secondary-button-text">Start Over</Text>
+                                        <Text className="auth-secondary-button-text">
+                                            {isMFA ? 'Cancel' : 'Start Over'}
+                                        </Text>
                                     </Pressable>
                                 </View>
                             </View>

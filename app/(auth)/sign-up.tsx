@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { SafeAreaView as RNSafeAreaView } from 'react-native-safe-area-context';
 import { styled } from 'nativewind';
 import { usePostHog } from 'posthog-react-native';
+import { hashEmail } from '@/lib/utils';
 
 const SafeAreaView = styled(RNSafeAreaView);
 
@@ -17,6 +18,7 @@ const SignUp = () => {
     const [emailAddress, setEmailAddress] = useState('');
     const [password, setPassword] = useState('');
     const [code, setCode] = useState('');
+    const [verificationError, setVerificationError] = useState<string | null>(null);
 
     // Validation states
     const [emailTouched, setEmailTouched] = useState(false);
@@ -50,40 +52,69 @@ const SignUp = () => {
     };
 
     const handleVerify = async () => {
-        await signUp.verifications.verifyEmailCode({
-            code,
-        });
+        try {
+            // Clear any previous verification errors
+            setVerificationError(null);
 
-        if (signUp.status === 'complete') {
-            await signUp.finalize({
-                navigate: ({ session, decorateUrl }) => {
-                    if (session?.currentTask) {
-                        console.log(session?.currentTask);
-                        return;
-                    }
-
-                    posthog.identify(emailAddress, {
-                        $set: { email: emailAddress },
-                        $set_once: { sign_up_date: new Date().toISOString() },
-                    });
-                    posthog.capture('user_signed_up', { email: emailAddress });
-
-                    const url = decorateUrl('/(tabs)');
-                    if (url.startsWith('http')) {
-                        // Only use window.location on web platform
-                        if (typeof window !== 'undefined' && window.location) {
-                            window.location.href = url;
-                        } else {
-                            // On native, just use router navigation
-                            router.replace('/(tabs)' as Href);
-                        }
-                    } else {
-                        router.replace(url as Href);
-                    }
-                },
+            await signUp.verifications.verifyEmailCode({
+                code,
             });
-        } else {
-            console.error('Sign-up attempt not complete:', signUp);
+
+             if (signUp.status === 'complete') {
+                await signUp.finalize({
+                    navigate: ({ session, decorateUrl }) => {
+                        if (session?.currentTask) {
+                            console.log(session?.currentTask);
+                            return;
+                        }
+
+                        // Use Clerk user ID for analytics instead of raw email (PII)
+                        const userId = session?.user?.id;
+                        const emailHash = hashEmail(emailAddress);
+
+                        if (userId) {
+                            posthog.identify(userId, {
+                                $set: {
+                                    email_hash: emailHash,
+                                },
+                                $set_once: { sign_up_date: new Date().toISOString() },
+                            });
+                        }
+
+                        posthog.capture('user_signed_up', {
+                            user_id: userId,
+                        });
+
+                        const url = decorateUrl('/(tabs)');
+                        if (url.startsWith('http')) {
+                            // Only use window.location on web platform
+                            if (typeof window !== 'undefined' && window.location) {
+                                window.location.href = url;
+                            } else {
+                                // On native, just use router navigation
+                                router.replace('/(tabs)' as Href);
+                            }
+                        } else {
+                            router.replace(url as Href);
+                        }
+                    },
+                });
+            } else {
+                console.error('Sign-up attempt not complete:', signUp);
+            }
+        } catch (error) {
+            console.error('Email verification failed:', error);
+
+            // Set user-friendly error message
+            const errorMessage =
+                error instanceof Error && error.message
+                    ? error.message
+                    : 'Verification failed. Please check your code and try again.';
+
+            setVerificationError(errorMessage);
+            posthog.capture('user_sign_up_verification_failed', {
+                error_message: errorMessage,
+            });
         }
     };
 
@@ -142,6 +173,9 @@ const SignUp = () => {
                                             autoComplete="one-time-code"
                                             maxLength={6}
                                         />
+                                        {verificationError && (
+                                            <Text className="auth-error">{verificationError}</Text>
+                                        )}
                                         {errors.fields.code && (
                                             <Text className="auth-error">{errors.fields.code.message}</Text>
                                         )}
